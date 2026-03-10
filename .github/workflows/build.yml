@@ -20,10 +20,7 @@ jobs:
 
       - name: Free up disk space
         run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf "/usr/local/share/boost"
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost
           df -hT
 
       - name: Clone source code
@@ -36,12 +33,19 @@ jobs:
         run: |
           cp feeds.conf openwrt/feeds.conf
           cp .config openwrt/.config
+          cd openwrt
+          cat feeds.conf
 
-      - name: Update and install feeds
+      - name: Update feeds (with retry)
         working-directory: openwrt
         run: |
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+          for i in 1 2 3; do
+            ./scripts/feeds update -a && break || sleep 10
+          done
+
+      - name: Install feeds
+        working-directory: openwrt
+        run: ./scripts/feeds install -a
 
       - name: Download dl package
         working-directory: openwrt
@@ -51,39 +55,26 @@ jobs:
         working-directory: openwrt
         run: |
           make -j$(nproc) || make -j1 V=s
-          echo "build_size=$(du -sz bin/targets/ | awk '{print $1}')" >> $GITHUB_ENV
 
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
           name: ImmortalWrt-x86_64
-          path: |
-            openwrt/bin/targets/x86/64/*.img.gz
-            openwrt/bin/targets/x86/64/*.manifest
-            openwrt/bin/targets/x86/64/sha256sums
+          path: openwrt/bin/targets/x86/64/*.img.gz
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: |
-            openwrt/bin/targets/x86/64/*.img.gz
-            openwrt/bin/targets/x86/64/*.manifest
+          files: openwrt/bin/targets/x86/64/*.img.gz
           body: |
-            ## ImmortalWrt x86_64 固件
+            ## ImmortalWrt x86_64
             
-            ### 包含插件
-            - FRP 客户端 (frpc)
-            - 网络加速 (BBR/tproxy)
-            - OpenClash (去广告/代理)
-            - AdGuard Home (DNS 去广告)
-            - LuCI 管理界面
+            ### 插件
+            - frpc (内网穿透)
+            - BBR (网络加速)
+            - OpenClash (去广告)
+            - AdGuard Home (DNS 过滤)
             - Samba4 (文件共享)
-            - NAS 支持 (EXT4/NTFS/vfat)
-            
-            ### 使用说明
-            1. 下载 *.combined.img.gz 文件
-            2. 解压后写入 U 盘或硬盘
-            3. 从 U 盘/硬盘启动即可
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
