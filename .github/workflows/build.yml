@@ -1,0 +1,88 @@
+name: Build ImmortalWrt
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt.git
+  REPO_BRANCH: master
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize environment
+        run: |
+          sudo -E apt-get -qq update
+          sudo -E apt-get -qq install $(curl -fsSL https://raw.githubusercontent.com/immortalwrt/immortalwrt/master/scripts/requirements.sh | grep -oP 'apt-get install \K.*' | head -1)
+          sudo -E apt-get -qq autoremove --purge
+          sudo -E apt-get -qq clean
+          sudo timedatectl set-timezone "$TZ"
+          sudo mkdir -p /workdir
+          sudo chown $USER:$GROUPS /workdir
+
+      - name: Clone source code
+        working-directory: /workdir
+        run: |
+          df -hT $PWD
+          git clone $REPO_URL -b $REPO_BRANCH openwrt
+          ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+
+      - name: Copy configuration
+        run: |
+          cp feeds.conf openwrt/feeds.conf
+          cp .config openwrt/.config
+
+      - name: Update feeds
+        working-directory: openwrt
+        run: ./scripts/feeds update -a
+
+      - name: Install feeds
+        working-directory: openwrt
+        run: ./scripts/feeds install -a
+
+      - name: Download dl package
+        working-directory: openwrt
+        run: make download -j8 FIND_SOURCES=$PWD
+
+      - name: Build firmware
+        working-directory: openwrt
+        run: |
+          make -j$(nproc) || make -j1 V=s
+          echo "build_size=$(du -sz bin/targets/ | awk '{print $1}')" >> $GITHUB_ENV
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: ImmortalWrt-x86_64
+          path: |
+            openwrt/bin/targets/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: openwrt/bin/targets/x86/64/*.img.gz
+          body: |
+            ## ImmortalWrt x86_64 固件
+            
+            ### 包含插件
+            - FRP 客户端 (frpc)
+            - 网络加速 (BBR/tproxy)
+            - OpenClash (去广告/代理)
+            - LuCI 管理界面
+            - NAS 支持 (EXT4/NTFS/vfat)
+            
+            ### 使用说明
+            1. 下载 *.combined.img.gz 文件
+            2. 解压后写入 U 盘或硬盘
+            3. 从 U 盘/硬盘启动即可
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
