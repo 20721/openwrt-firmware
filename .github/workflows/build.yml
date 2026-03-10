@@ -18,39 +18,34 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Initialize environment
+      - name: Free up disk space
         run: |
-          sudo -E apt-get -qq update
-          sudo -E apt-get -qq install $(curl -fsSL https://raw.githubusercontent.com/immortalwrt/immortalwrt/master/scripts/requirements.sh | grep -oP 'apt-get install \K.*' | head -1)
-          sudo -E apt-get -qq autoremove --purge
-          sudo -E apt-get -qq clean
-          sudo timedatectl set-timezone "$TZ"
-          sudo mkdir -p /workdir
-          sudo chown $USER:$GROUPS /workdir
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          df -hT
 
       - name: Clone source code
-        working-directory: /workdir
         run: |
-          df -hT $PWD
-          git clone $REPO_URL -b $REPO_BRANCH openwrt
-          ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+          git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
+          cd openwrt
+          echo "WORK_DIR=$PWD" >> $GITHUB_ENV
 
       - name: Copy configuration
         run: |
           cp feeds.conf openwrt/feeds.conf
           cp .config openwrt/.config
 
-      - name: Update feeds
+      - name: Update and install feeds
         working-directory: openwrt
-        run: ./scripts/feeds update -a
-
-      - name: Install feeds
-        working-directory: openwrt
-        run: ./scripts/feeds install -a
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
 
       - name: Download dl package
         working-directory: openwrt
-        run: make download -j8 FIND_SOURCES=$PWD
+        run: make download -j8
 
       - name: Build firmware
         working-directory: openwrt
@@ -63,13 +58,17 @@ jobs:
         with:
           name: ImmortalWrt-x86_64
           path: |
-            openwrt/bin/targets/
+            openwrt/bin/targets/x86/64/*.img.gz
+            openwrt/bin/targets/x86/64/*.manifest
+            openwrt/bin/targets/x86/64/sha256sums
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: openwrt/bin/targets/x86/64/*.img.gz
+          files: |
+            openwrt/bin/targets/x86/64/*.img.gz
+            openwrt/bin/targets/x86/64/*.manifest
           body: |
             ## ImmortalWrt x86_64 固件
             
@@ -77,7 +76,9 @@ jobs:
             - FRP 客户端 (frpc)
             - 网络加速 (BBR/tproxy)
             - OpenClash (去广告/代理)
+            - AdGuard Home (DNS 去广告)
             - LuCI 管理界面
+            - Samba4 (文件共享)
             - NAS 支持 (EXT4/NTFS/vfat)
             
             ### 使用说明
